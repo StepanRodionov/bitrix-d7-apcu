@@ -3,14 +3,8 @@
 use Psr\SimpleCache\CacheInterface;
 use SR\Cache\ApcuStorage;
 use SR\D7Cache\Utils\Serializer;
-use Bitrix\Main\ORM\Query\Result as QueryResult;
+use \Bitrix\Main\ORM\Query\Result;
 
-/**
- * Created by PhpStorm.
- * User: Админ
- * Date: 05.01.2019
- * Time: 16:04
- */
 
 abstract class CachedDataManager extends DataManager
 {
@@ -22,36 +16,51 @@ abstract class CachedDataManager extends DataManager
     /** @var Serializer */
     private static $serializer;
 
-    /** @var string */
-    private static $entityPrefix;
-
-    private static $inited = 0;
+    /** @var bool */
+    private static $inited = false;
 
     public static function init()
     {
         self::$cacheInterface = self::$cacheInterface ?? new (self::$defaultCacheInterface)();
         self::$serializer = new Serializer();
-        self::$inited = 1;
+        self::$inited = true;
     }
 
+    /**
+     * @param CacheInterface $cacheInterface
+     */
     public static function setCacheInterface(CacheInterface $cacheInterface)
     {
         self::$cacheInterface = $cacheInterface;
     }
 
     /**
-     * @param $primary
-     * @return QueryResult
-     * @throws \Psr\SimpleCache\InvalidArgumentException
+     * @return string
      */
-    public static function getByPrimary($primary){
+    abstract static function getEntityPrefix();
+
+    private static function makeKey($key, $isXml = false)
+    {
+        $xmlPart = $isXml ? 'XML_ID' : '';
+        static::getEntityPrefix() . $xmlPart . $primary;
+    }
+
+    /**
+     * @param $primary
+     * @return Result
+     * @throws \Psr\SimpleCache\InvalidArgumentException
+     *
+     * Не изменяем return type битриксового getByPrimary для совместимости
+     */
+    public static function getByPrimary($primary)
+    {
         static::normalizePrimary($primary);
         static::validatePrimary($primary);
 
         //  Хз сколько я тут сэкономил.
         self::$inited && self::init();
 
-        $key = static::$entityPrefix . $primary;
+        $key = self::makeKey($primary);
         $cacheInterface = self::$cacheInterface;
         if($elem = $cacheInterface->get($key)){
             return (self::$serializer)->unserialize($elem);
@@ -62,10 +71,42 @@ abstract class CachedDataManager extends DataManager
         return $elem;
     }
 
-    public static function getReference($xmlId)
+    /**
+     * @param string $xmlId
+     * @return array|null
+     * @throws \Psr\SimpleCache\InvalidArgumentException
+     */
+    public static function getReference(string $xmlId)
     {
-        $q = static::$query;
+        self::$inited && self::init();
 
+        $key = self::makeKey($xmlId, true);
+        $cacheInterface = self::$cacheInterface;
+        if($elem = $cacheInterface->get($key)){
+            return (self::$serializer)->unserialize($elem);
+        }
 
+        $query = static::query();
+
+        $elem = $query->setSelect(['*'])
+            ->setFilter(['UF_XML_ID' => $xmlId])
+            ->setLimit(1)
+            ->exec()
+            ->fetch();
+
+        $cacheInterface->set($key, $elem);
+        return $elem;
+    }
+
+    public static function getReferenceMulti(array $xmlIds)
+    {
+        self::$inited && self::init();
+
+        $cacheInterface = self::$cacheInterface;
+        $keys = array_map($xmlIds, function ($xmlId) {
+            $xmlId = self::makeKey($xmlId, true);
+        });
+
+        $elems = $cacheInterface->getMultiple($keys);
     }
 }
