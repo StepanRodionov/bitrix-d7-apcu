@@ -19,5 +19,8 @@
       "url": "git@github.com:StepanRodionov/php-apcu-cache.git",
       "type": "vcs"
     }
-  ]
+  ],
+  "autoload": {
+    "SR\\D7Cache": "src"
+  }
 }
