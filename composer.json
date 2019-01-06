@@ -21,6 +21,8 @@
     }
   ],
   "autoload": {
-    "SR\\D7Cache": "src"
+    "psr-4": {
+      "SR\\D7Cache": "src"
+    }
   }
 }
