@@ -1,9 +1,12 @@
 <?php
 
+namespace SR\D7Cache\DataManager;
+
 use Psr\SimpleCache\CacheInterface;
 use SR\Cache\ApcuStorage;
 use SR\D7Cache\Utils\Serializer;
-use \Bitrix\Main\ORM\Query\Result;
+use Bitrix\Main\ORM\Query\Result;
+use Bitrix\Main\ORM\Data\DataManager;
 
 
 abstract class CachedDataManager extends DataManager
@@ -98,6 +101,11 @@ abstract class CachedDataManager extends DataManager
         return $elem;
     }
 
+    /**
+     * @param array $xmlIds
+     * @return array|iterable
+     * @throws \Psr\SimpleCache\InvalidArgumentException
+     */
     public static function getReferenceMulti(array $xmlIds)
     {
         self::$inited && self::init();
@@ -107,6 +115,32 @@ abstract class CachedDataManager extends DataManager
             $xmlId = self::makeKey($xmlId, true);
         });
 
-        $elems = $cacheInterface->getMultiple($keys);
+        $emptyKeys = [];
+        $cachedElems = $cacheInterface->getMultiple($keys);
+        foreach ($cachedElems as $key => $elem){
+            if ($elem === null){
+                $emptyKeys[] = $key;
+                unset($cachedElems[$key]);
+            }
+        }
+        if(\count($emptyKeys) == 0){
+           return $cachedElems;
+        }
+
+        $elemsFromBase = [];
+        $query = static::query();
+
+        $dbElems = $elem = $query->setSelect(['*'])
+            ->setFilter(['UF_XML_ID' => $emptyKeys])
+            ->setLimit(1)
+            ->exec()
+            ->fetchAll();
+
+        foreach ($dbElems as $elem) {
+            $elemsFromBase[$elem['UF_XML_ID']] = $elem;
+            $cacheInterface->set($elem['UF_XML_ID'], $elem);
+        }
+
+        return array_merge($cachedElems, $dbElems);
     }
 }
