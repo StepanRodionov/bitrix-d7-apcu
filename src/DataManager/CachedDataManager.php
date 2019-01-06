@@ -24,7 +24,8 @@ abstract class CachedDataManager extends DataManager
 
     public static function init()
     {
-        self::$cacheInterface = self::$cacheInterface ?? new (self::$defaultCacheInterface)();
+        $className = self::$defaultCacheInterface;
+        self::$cacheInterface = self::$cacheInterface ?? new $className();
         self::$serializer = new Serializer();
         self::$inited = true;
     }
