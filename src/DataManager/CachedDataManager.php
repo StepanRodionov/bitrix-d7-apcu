@@ -11,23 +11,23 @@ use Bitrix\Main\ORM\Data\DataManager;
 
 abstract class CachedDataManager extends DataManager
 {
-    private static $defaultCacheInterface = ApcuStorage::class;
+    protected static $defaultCacheInterface = ApcuStorage::class;
 
     /** @var CacheInterface */
-    private static $cacheInterface;
+    protected static $cacheInterface;
 
     /** @var Serializer */
-    private static $serializer;
+    protected static $serializer;
 
     /** @var bool */
-    private static $inited = false;
+    protected static $inited = false;
 
     public static function init()
     {
-        $className = self::$defaultCacheInterface;
-        self::$cacheInterface = self::$cacheInterface ?? new $className();
-        self::$serializer = new Serializer();
-        self::$inited = true;
+        $className = static::$defaultCacheInterface;
+        static::$cacheInterface = static::$cacheInterface ?? new $className();
+        static::$serializer = new Serializer();
+        static::$inited = true;
     }
 
     /**
@@ -35,43 +35,55 @@ abstract class CachedDataManager extends DataManager
      */
     public static function setCacheInterface(CacheInterface $cacheInterface)
     {
-        self::$cacheInterface = $cacheInterface;
+        static::$cacheInterface = $cacheInterface;
     }
 
     /**
      * @return string
      */
-    abstract static function getEntityPrefix();
+    static function getEntityPrefix(){
+        return get_called_class();
+    }
 
-    private static function makeKey($key, $isXml = false)
+    /**
+     * @param $key
+     * @param bool $isXml
+     *
+     * @return string
+     */
+    private static function makeKey($key, $isXml = false): string
     {
         $xmlPart = $isXml ? 'XML_ID' : '';
-        static::getEntityPrefix() . $xmlPart . $primary;
+        return static::getEntityPrefix() . $xmlPart . $key;
     }
 
     /**
      * @param $primary
-     * @return Result
+     * @return array|null
      * @throws \Psr\SimpleCache\InvalidArgumentException
      *
      * Не изменяем return type битриксового getByPrimary для совместимости
      */
     public static function getByPrimary($primary)
     {
+        $originalPrimary = $primary;
         static::normalizePrimary($primary);
         static::validatePrimary($primary);
 
         //  Хз сколько я тут сэкономил.
-        self::$inited && self::init();
+        self::$inited || self::init();
 
-        $key = self::makeKey($primary);
-        $cacheInterface = self::$cacheInterface;
+        $key = self::makeKey($originalPrimary);
+        $cacheInterface = static::$cacheInterface;
         if($elem = $cacheInterface->get($key)){
-            return (self::$serializer)->unserialize($elem);
+            static::cacheOk();
+            return (static::$serializer)->unserialize($elem);
         }
 
-        $elem = parent::getByPrimary($primary);
-        $cacheInterface->set($key, $elem);
+        static::cacheMiss();
+        $elem = parent::getByPrimary($primary)->fetch();
+        $serializedElem = (static::$serializer)->serialize($elem);
+        $succ = $cacheInterface->set($key, $serializedElem);
         return $elem;
     }
 
@@ -82,14 +94,16 @@ abstract class CachedDataManager extends DataManager
      */
     public static function getReference(string $xmlId)
     {
-        self::$inited && self::init();
+        self::$inited || self::init();
 
         $key = self::makeKey($xmlId, true);
-        $cacheInterface = self::$cacheInterface;
+        $cacheInterface = static::$cacheInterface;
         if($elem = $cacheInterface->get($key)){
-            return (self::$serializer)->unserialize($elem);
+            static::cacheOk();
+            return (static::$serializer)->unserialize($elem);
         }
 
+        static::cacheMiss();
         $query = static::query();
 
         $elem = $query->setSelect(['*'])
@@ -109,9 +123,9 @@ abstract class CachedDataManager extends DataManager
      */
     public static function getReferenceMulti(array $xmlIds)
     {
-        self::$inited && self::init();
+        self::$inited || self::init();
 
-        $cacheInterface = self::$cacheInterface;
+        $cacheInterface = static::$cacheInterface;
         $keys = array_map($xmlIds, function ($xmlId) {
             $xmlId = self::makeKey($xmlId, true);
         });
@@ -120,9 +134,12 @@ abstract class CachedDataManager extends DataManager
         $cachedElems = $cacheInterface->getMultiple($keys);
         foreach ($cachedElems as $key => $elem){
             if ($elem === null){
+                static::cacheMiss();
                 $emptyKeys[] = $key;
                 unset($cachedElems[$key]);
+                continue;
             }
+            static::cacheOk();
         }
         if(\count($emptyKeys) == 0){
            return $cachedElems;
@@ -144,4 +161,16 @@ abstract class CachedDataManager extends DataManager
 
         return array_merge($cachedElems, $dbElems);
     }
+
+    /**
+     * Here you can realize statistics storing of cache usage
+     */
+    protected static function cacheOk()
+    {}
+
+    /**
+     * Here you can realize statistics storing of cache usage
+     */
+    protected static function cacheMiss()
+    {}
 }
